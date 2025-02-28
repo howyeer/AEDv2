@@ -608,3 +608,32 @@ def get_phrases_from_posmap(
         return tokenizer.decode(token_ids)
     else:
         raise NotImplementedError("posmap must be 1-dim")
+
+
+def get_phrases_from_posmap_tao(
+    logit: torch.tensor ,posmap: torch.BoolTensor, tokenized: Dict, tokenizer: AutoTokenizer, left_idx: int = 0, right_idx: int = 255
+):
+    assert isinstance(posmap, torch.Tensor), "posmap must be torch.Tensor"
+    if posmap.dim() == 1:
+        posmap[0: left_idx + 1] = False
+        posmap[right_idx:] = False
+        non_zero_idx = posmap.nonzero(as_tuple=True)[0].tolist()
+        p_idx = []
+        max_values, max_idx = torch.max(logit, dim=0, keepdim=True)
+        if tokenized["input_ids"][max_idx[0]] != 1012:
+            p_idx.append(max_idx[0])
+            ds_idx = max_idx[0]-1
+            ps_idx = max_idx[0]+1
+            while tokenized["input_ids"][ds_idx] != 101 and tokenized["input_ids"][ds_idx] != 1012:
+                p_idx.append(ds_idx)
+                ds_idx =  ds_idx - 1
+            while tokenized["input_ids"][ps_idx] != 102 and tokenized["input_ids"][ps_idx] != 1012:
+                p_idx.append(ps_idx)
+                ps_idx = ps_idx + 1
+        else:
+            p_idx.append(max_idx[0])
+        p_idx = sorted(p_idx)
+        token_ids = [tokenized["input_ids"][i] for i in p_idx]
+        return tokenizer.decode(token_ids)
+    else:
+        raise NotImplementedError("posmap must be 1-dim")

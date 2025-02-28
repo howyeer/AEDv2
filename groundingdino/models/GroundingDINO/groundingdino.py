@@ -89,7 +89,7 @@ class GroundingDINO(nn.Module):
         self.hidden_dim = hidden_dim = transformer.d_model
         self.num_feature_levels = num_feature_levels
         self.nheads = nheads
-        self.max_text_len = 256
+        self.max_text_len = max_text_len
         self.sub_sentence_present = sub_sentence_present
 
         # setting query dim
@@ -290,10 +290,10 @@ class GroundingDINO(nn.Module):
             ]
 
         text_dict = {
-            "encoded_text": encoded_text,  # bs, 195, d_model
-            "text_token_mask": text_token_mask,  # bs, 195
-            "position_ids": position_ids,  # bs, 195
-            "text_self_attention_masks": text_self_attention_masks,  # bs, 195,195
+            "encoded_text": encoded_text,  # bs, text_len, d_model
+            "text_token_mask": text_token_mask,  # bs, text_len
+            "position_ids": position_ids,  # bs, text_len
+            "text_self_attention_masks": text_self_attention_masks,  # bs, text_len,text_len
         }
 
         # import ipdb; ipdb.set_trace()

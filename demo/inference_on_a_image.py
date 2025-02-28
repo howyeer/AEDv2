@@ -1,12 +1,14 @@
 import argparse
 import os
 import sys
+sys.path.append('/home/hhy_2023/aaaacode/GroundingDINO')
 
 import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
 import groundingdino.datasets.transforms as T
+# import aedv2.datasets.transforms as T
 from groundingdino.models import build_model
 from groundingdino.util import box_ops
 from groundingdino.util.slconfig import SLConfig
@@ -37,7 +39,7 @@ def plot_boxes_to_image(image_pil, tgt):
         x0, y0, x1, y1 = box
         x0, y0, x1, y1 = int(x0), int(y0), int(x1), int(y1)
 
-        draw.rectangle([x0, y0, x1, y1], outline=color, width=6)
+        draw.rectangle([x0, y0, x1, y1], outline=color, width=4)
         # draw.text((x0, y0), str(label), fill=color)
 
         font = ImageFont.load_default()
@@ -61,11 +63,32 @@ def load_image(image_path):
 
     transform = T.Compose(
         [
-            T.RandomResize([800], max_size=1333),
+            T.RandomResize([800], max_size=1536),
             T.ToTensor(),
             T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ]
     )
+
+
+    # normalize = T.MotCompose([
+    #     T.MotToTensor(),
+    #     T.MotNormalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    # ])
+    # scales = [608, 640, 672, 704, 736, 768, 800, 832, 864, 896, 928, 960, 992]
+
+    # transform_aed = T.MotCompose([
+    #         T.MotRandomHorizontalFlip(),
+    #         T.MotRandomSelect(
+    #             T.MotRandomResize(scales, max_size=1536),
+    #             T.MotCompose([
+    #                 T.MotRandomResize([800, 1000, 1200]),
+    #                 T.FixedMotRandomCrop(800, 1200),
+    #                 T.MotRandomResize(scales, max_size=1536),
+    #             ])
+    #         ),
+    #         T.MOTHSV(),
+    #         normalize,
+    #     ])
     image, _ = transform(image_pil, None)  # 3, h, w
     return image_pil, image
 
@@ -92,14 +115,14 @@ def get_grounding_output(model, image, caption, box_threshold, text_threshold=No
     image = image.to(device)
     with torch.no_grad():
         outputs = model(image[None], captions=[caption])
-    logits = outputs["pred_logits"].sigmoid()[0]  # (nq, 256)
-    boxes = outputs["pred_boxes"][0]  # (nq, 4)
+    logits = outputs["pred_logits"].sigmoid()[0]  # (num_q, 256)
+    boxes = outputs["pred_boxes"][0]  # (num_q, 4)
 
     # filter output
     if token_spans is None:
         logits_filt = logits.cpu().clone()
         boxes_filt = boxes.cpu().clone()
-        filt_mask = logits_filt.max(dim=1)[0] > box_threshold
+        filt_mask = logits_filt.max(dim=1)[0] > box_threshold   # [0]为返回值，max会返回values和indices
         logits_filt = logits_filt[filt_mask]  # num_filt, 256
         boxes_filt = boxes_filt[filt_mask]  # num_filt, 4
 
@@ -198,10 +221,9 @@ if __name__ == "__main__":
 
 
     # run model
-    boxes_filt, pred_phrases = get_grounding_output(
-        model, image, text_prompt, box_threshold, text_threshold, cpu_only=args.cpu_only, token_spans=eval(f"{token_spans}")
-    )
-
+    boxes_filt, pred_phrases = get_grounding_output(model, image, text_prompt, box_threshold, text_threshold, cpu_only=args.cpu_only, token_spans=eval(f"{token_spans}"))
+    # boxes_filt = torch.tensor([[0.5484, 0.4729, 0.1141, 0.3264],[0.5094, 0.5729, 0.0641, 0.0903]])
+    # pred_phrases = list(range(boxes_filt.size(0)))
     # visualize pred
     size = image_pil.size
     pred_dict = {

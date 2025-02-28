@@ -255,10 +255,10 @@ class ContrastiveEmbed(nn.Module):
         """
         assert isinstance(text_dict, dict)
 
-        y = text_dict["encoded_text"]
-        text_token_mask = text_dict["text_token_mask"]
+        y = text_dict["encoded_text"]       # bs, text_len, d_model
+        text_token_mask = text_dict["text_token_mask"]   # text_len
 
-        res = x @ y.transpose(-1, -2)
+        res = x @ y.transpose(-1, -2)  # bs, 900, d_model @ bs, d_model, text_len
         res.masked_fill_(~text_token_mask[:, None, :], float("-inf"))
 
         # padding to max_text_len

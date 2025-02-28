@@ -209,7 +209,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         "Grounding DINO eval on COCO", add_help=True)
     # load model
-    parser.add_argument("--config_file", "-c", type=str,
+    parser.add_argument("--config_file", "-c", type=str, 
                         required=True, help="path to config file")
     parser.add_argument(
         "--checkpoint_path", "-p", type=str, required=True, help="path to checkpoint file"
@@ -222,9 +222,9 @@ if __name__ == "__main__":
                         help="number of topk to select")
 
     # coco info
-    parser.add_argument("--anno_path", type=str,
+    parser.add_argument("--anno_path", type=str, 
                         required=True, help="coco root")
-    parser.add_argument("--image_dir", type=str,
+    parser.add_argument("--image_dir", type=str, 
                         required=True, help="coco image dir")
     parser.add_argument("--num_workers", type=int, default=4,
                         help="number of workers for dataloader")

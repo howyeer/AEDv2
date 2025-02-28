@@ -1,0 +1,107 @@
+Transformer(
+  (encoder): TransformerEncoder(
+    (layers): ModuleList(
+      (0-5): 6 x DeformableTransformerEncoderLayer(
+        (self_attn): MultiScaleDeformableAttention(
+          (sampling_offsets): Linear(in_features=256, out_features=256, bias=True)
+          (attention_weights): Linear(in_features=256, out_features=128, bias=True)
+          (value_proj): Linear(in_features=256, out_features=256, bias=True)
+          (output_proj): Linear(in_features=256, out_features=256, bias=True)
+        )
+        (dropout1): Dropout(p=0.0, inplace=False)
+        (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+        (linear1): Linear(in_features=256, out_features=2048, bias=True)
+        (dropout2): Dropout(p=0.0, inplace=False)
+        (linear2): Linear(in_features=2048, out_features=256, bias=True)
+        (dropout3): Dropout(p=0.0, inplace=False)
+        (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+      )
+    )
+    (text_layers): ModuleList(
+      (0-5): 6 x TransformerEncoderLayer(
+        (self_attn): MultiheadAttention(
+          (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+        )
+        (linear1): Linear(in_features=256, out_features=1024, bias=True)
+        (dropout): Dropout(p=0.0, inplace=False)
+        (linear2): Linear(in_features=1024, out_features=256, bias=True)
+        (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+        (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+        (dropout1): Dropout(p=0.0, inplace=False)
+        (dropout2): Dropout(p=0.0, inplace=False)
+      )
+    )
+    (fusion_layers): ModuleList(
+      (0-5): 6 x BiAttentionBlock(
+        (layer_norm_v): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+        (layer_norm_l): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+        (attn): BiMultiHeadAttention(
+          (v_proj): Linear(in_features=256, out_features=1024, bias=True)
+          (l_proj): Linear(in_features=256, out_features=1024, bias=True)
+          (values_v_proj): Linear(in_features=256, out_features=1024, bias=True)
+          (values_l_proj): Linear(in_features=256, out_features=1024, bias=True)
+          (out_v_proj): Linear(in_features=1024, out_features=256, bias=True)
+          (out_l_proj): Linear(in_features=1024, out_features=256, bias=True)
+        )
+        (drop_path): DropPath(drop_prob=0.100)
+      )
+    )
+  )
+  (decoder): TransformerDecoder(
+    (layers): ModuleList(
+      (0-5): 6 x DeformableTransformerDecoderLayer(
+        (cross_attn): MultiScaleDeformableAttention(
+          (sampling_offsets): Linear(in_features=256, out_features=256, bias=True)
+          (attention_weights): Linear(in_features=256, out_features=128, bias=True)
+          (value_proj): Linear(in_features=256, out_features=256, bias=True)
+          (output_proj): Linear(in_features=256, out_features=256, bias=True)
+        )
+        (dropout1): Identity()
+        (norm1): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+        (ca_text): MultiheadAttention(
+          (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+        )
+        (catext_dropout): Identity()
+        (catext_norm): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+        (self_attn): MultiheadAttention(
+          (out_proj): NonDynamicallyQuantizableLinear(in_features=256, out_features=256, bias=True)
+        )
+        (dropout2): Identity()
+        (norm2): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+        (linear1): Linear(in_features=256, out_features=2048, bias=True)
+        (dropout3): Identity()
+        (linear2): Linear(in_features=2048, out_features=256, bias=True)
+        (dropout4): Identity()
+        (norm3): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+      )
+    )
+    (norm): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+    (ref_point_head): MLP(
+      (layers): ModuleList(
+        (0): Linear(in_features=512, out_features=256, bias=True)
+        (1): Linear(in_features=256, out_features=256, bias=True)
+      )
+    )
+    (bbox_embed): ModuleList(
+      (0-5): 6 x MLP(
+        (layers): ModuleList(
+          (0-1): 2 x Linear(in_features=256, out_features=256, bias=True)
+          (2): Linear(in_features=256, out_features=4, bias=True)
+        )
+      )
+    )
+    (class_embed): ModuleList(
+      (0-5): 6 x ContrastiveEmbed()
+    )
+  )
+  (tgt_embed): Embedding(900, 256)
+  (enc_output): Linear(in_features=256, out_features=256, bias=True)
+  (enc_output_norm): LayerNorm((256,), eps=1e-05, elementwise_affine=True)
+  (enc_out_bbox_embed): MLP(
+    (layers): ModuleList(
+      (0-1): 2 x Linear(in_features=256, out_features=256, bias=True)
+      (2): Linear(in_features=256, out_features=4, bias=True)
+    )
+  )
+  (enc_out_class_embed): ContrastiveEmbed()
+)
