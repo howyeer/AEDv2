@@ -43,8 +43,6 @@ class TAODatasetTrain(Dataset):  # TAO dataset
         self.sample_mode = args.sample_mode
         self.sample_interval = args.sample_interval
 
-        self.has_vised = 0
-        self.vis_num = 10
 
     def _generate_train_imgs(self, vid_img_map, img_ann_map, vids, cats, base_only):
         if base_only:
@@ -447,6 +445,21 @@ def build(image_set, args):
     if image_set == 'val':
         dataset = TAODatasetVal(root, args, logger=None, transform=transform, one_class=False)
     return dataset
+
+
+#数据集子集
+class SubsetDataset(TAODatasetTrain):
+    def __init__(self, original_dataset, fraction=0.5):
+        self.original_dataset = original_dataset
+        self.size = int(fraction * len(original_dataset))
+        self.all_indices = original_dataset.all_indices[:self.size]  # 取前 fraction 部分
+
+    def __len__(self):
+        return len(self.all_indices)
+
+    def __getitem__(self, idx):
+        return self.original_dataset[idx]
+
 
 
 if __name__ == '__main__':

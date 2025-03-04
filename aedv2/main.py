@@ -32,6 +32,7 @@ import util.misc as utils
 
 from datasets import samplers 
 from aedv2.datasets.taodataset import build as build_dataset
+from aedv2.datasets.taodataset import SubsetDataset
 from aedv2.models.aedv2 import build
 
 from engine import train_one_epoch_mot
@@ -123,10 +124,10 @@ def get_args_parser():
     parser.add_argument('--cross_clip_weight_loss_coef', default=1, type=float)  # cross-clip
 
     # dataset settings
-    parser.add_argument('--seed', default=111, type=int)
+    parser.add_argument('--seed', default=537, type=int)
     parser.add_argument('--dataset_file', default='coco',
                         help='dataset name')
-    parser.add_argument('--output_dir', default='',
+    parser.add_argument('--output_dir', default='', type=str,
                         help='path where to save, empty for no saving')
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
@@ -235,6 +236,9 @@ def main(args):
 
     dataset_train = build_dataset(image_set='train', args=args)
 
+    #只去一部分训练（调试用）
+    dataset_train = SubsetDataset(dataset_train, 0.05)
+
     if args.distributed:
         if args.cache_mode:
             sampler_train = samplers.NodeDistributedSampler(dataset_train)
@@ -291,17 +295,19 @@ def main(args):
         model_without_ddp = model.module
 
 
-    output_dir = Path(args.output_dir)
-
+    output_dir = args.output_dir
+    date_time = time.strftime("%Y%m%d-%H%M%S")
+    output_dir = os.path.join(output_dir,date_time)
+    os.makedirs(output_dir, exist_ok=True)
     # init tensorboard
-    if args.output_dir and int(os.environ.get("RANK", 0))==0:
-        print(f'init tensorboard')
-        writer = SummaryWriter(output_dir/'tensorboard_logs')
-    else:
-        writer = None
+    # if args.output_dir and int(os.environ.get("RANK", 0))==0:
+    #     print(f'init tensorboard')
+    #     writer = SummaryWriter(output_dir/'tensorboard_logs')
+    # else:
+    writer = None
     print("Start training")
     start_time = time.time()
-
+    
     dataset_train.set_epoch(args.start_epoch)
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -310,9 +316,9 @@ def main(args):
             model, criterion, data_loader_train, optimizer, device, epoch, args.dataset_file, args.clip_max_norm, writer, args.print_freq,)
         lr_scheduler.step()
         if args.output_dir:
-            checkpoint_paths = [output_dir / 'checkpoint_last.pth']
+            checkpoint_paths = [os.path.join(output_dir,'checkpoint_last.pth')]
             if (epoch + 1) % args.save_period == 0:
-                checkpoint_paths.append(output_dir / f'checkpoint_epoch_{epoch:04}.pth')
+                checkpoint_paths.append(os.path.join(output_dir,f'checkpoint_epoch_{epoch:03}.pth'))
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master({
                     'model': model_without_ddp.state_dict(),
@@ -349,7 +355,7 @@ def check_args(args):
 
 if __name__ == '__main__':
     #可视化用的文件夹
-    folder_path = 'aedv2/output_img/'
+    folder_path = 'aedv2/output_dir/output_imgs/'
     if os.path.exists(folder_path):
         shutil.rmtree(folder_path)  
 

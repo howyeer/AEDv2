@@ -1,7 +1,7 @@
 export CUDA_VISIBLE_DEVICES=0,1
 export TORCH_DISTRIBUTED_DEBUG=DETAIL
 export TORCH_DISTRIBUTED_TIMEOUT=100000
-python3 -m torch.distributed.launch --nproc_per_node=2 --master_port=29501 \
+python3 -m torch.distributed.launch --nproc_per_node=2 --master_port=29505 \
     --use_env aedv2/main.py \
     -c groundingdino/config/GroundingDINO_SwinT_OGC_AED.py \
     -p weights/groundingdino_swint_ogc.pth \
@@ -12,7 +12,6 @@ python3 -m torch.distributed.launch --nproc_per_node=2 --master_port=29501 \
     --with_box_refine  \
     --lr_drop 1 \
     --lr 0.001 \
-    --pretrained /home/hhy_2023/aaaacode/AED/pretrained/tao_ckpt_train_base.pth \
     --batch_size 1 \
     --sampler_lengths 8 \
     --decoder_cross_self \
@@ -41,5 +40,7 @@ python3 -m torch.distributed.launch --nproc_per_node=2 --master_port=29501 \
     --ema_weight 0.5 \
     --sample_interval 3 \
     --clip_gap 1 \
+    --output_dir /home/hhy_2023/aaaacode/grounding-dino-aed/aedv2/output_dir
+    
 
 

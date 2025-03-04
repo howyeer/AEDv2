@@ -420,7 +420,7 @@ class AEDv2(GroundingDINO):
     #-------------------------------
     def _grad_set(self):
         for name, param in self.named_parameters():
-            if "feature_embed" in name or "weight_attn" in name or "extra_linear" in name:   #"decoder.bbox_embed" in name or
+            if "decoder.bbox_embed" in name or "feature_embed" in name or "weight_attn" in name or "extra_linear" in name:   #"decoder.bbox_embed" in name or
                 param.requires_grad_(self.requires_set)
             else:
                 param.requires_grad_(False)
@@ -746,7 +746,7 @@ class AEDv2(GroundingDINO):
             labels_filt = torch.tensor(labels_filt).to(boxes_filt.device)
 
             #可视化出检测结果
-            # frame_ = frame.tensors[0]
+            frame_ = frame.tensors[0]
             # self.visualize(frame_, frame_index, boxes_filt, logits_filt, pred_phrases, 'det')
             # self.visualize(frame_, frame_index, gt.boxes, gt.labels, gt.obj_ids, 'gt')
 
@@ -807,7 +807,7 @@ class AEDv2(GroundingDINO):
                 box = box.astype(np.int32)
                 img = cv2.rectangle(img, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
                 cv2.putText(img, str(phrase)+' '+f"{logit:.3f}", (box[0], box[1]-2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-            cv2.imwrite('aedv2/output_img/det_clip_{}_frame_{}.jpg'.format(self.num_clip, frame_index), img)
+            cv2.imwrite('aedv2/output_dir/output_imgs/det_clip_{}_frame_{}.jpg'.format(self.num_clip, frame_index), img)
         elif data_type == 'gt':
             labels = info1.cpu().numpy()
             obj_ids = info2.cpu().numpy()
@@ -816,9 +816,9 @@ class AEDv2(GroundingDINO):
                 box[2:] += box[:2]
                 box *= np.array([w, h, w, h], dtype=np.float32)
                 box = box.astype(np.int32)
-                img = cv2.rectangle(img, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
+                img = cv2.rectangle(img, (box[0], box[1]), (box[2], box[3]), (255, 0, 0), 2)
                 cv2.putText(img, str(label)+' '+str(obj_id), (box[0], box[1]-2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
-            cv2.imwrite('aedv2/output_img/gt_clip_{}_frame_{}.jpg'.format(self.num_clip, frame_index), img)
+            cv2.imwrite('aedv2/output_dir/output_imgs/gt_clip_{}_frame_{}.jpg'.format(self.num_clip, frame_index), img)
 
 
 
