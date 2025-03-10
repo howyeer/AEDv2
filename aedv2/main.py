@@ -16,6 +16,7 @@ import datetime
 import random
 import time
 import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import shutil
 from pathlib import Path
 
@@ -212,7 +213,12 @@ def main(args):
     print("git:\n  {}\n".format(utils.get_sha()))
 
     print(args)
+    #可视化用的文件夹
+    folder_path = 'aedv2/output_dir/output_imgs/'
+    if os.path.exists(folder_path):
+        shutil.rmtree(folder_path)  
 
+    os.makedirs(folder_path, exist_ok=True)
     # if args.occupy_mem:
     #     print('occupying mem...')
     #     utils.occupy_mem(utils.get_rank())
@@ -225,19 +231,10 @@ def main(args):
     np.random.seed(seed)
     random.seed(seed)
 
-    config_file = args.config_file
-    checkpoint_path = args.checkpoint_path
-    model, criterion = build_model_main(config_file, checkpoint_path)
-    model.to(device)
-
-    model_without_ddp = model
-    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print('number of params:', n_parameters)
-
     dataset_train = build_dataset(image_set='train', args=args)
 
     #只去一部分训练（调试用）
-    dataset_train = SubsetDataset(dataset_train, 0.05)
+    # dataset_train = SubsetDataset(dataset_train, 0.06)
 
     if args.distributed:
         if args.cache_mode:
@@ -253,6 +250,15 @@ def main(args):
     data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
                                    collate_fn=collate_fn, num_workers=args.num_workers,
                                    pin_memory=True)
+    
+    config_file = args.config_file
+    checkpoint_path = args.checkpoint_path
+    model, criterion = build_model_main(config_file, checkpoint_path)
+    model.to(device)
+
+    model_without_ddp = model
+    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print('number of params:', n_parameters)
 
     def match_name_keywords(n, name_keywords):
         out = False
@@ -331,7 +337,7 @@ def main(args):
         dataset_train.step_epoch()
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print('Training time {}'.format(total_time_str))
+    print('Training time {}'.format(total_time_str),force=True)
 
 def check_args(args):
     print('checking args...')
@@ -354,14 +360,6 @@ def check_args(args):
         print('warning: not using box refinement.')
 
 if __name__ == '__main__':
-    #可视化用的文件夹
-    folder_path = 'aedv2/output_dir/output_imgs/'
-    if os.path.exists(folder_path):
-        shutil.rmtree(folder_path)  
-
-    os.makedirs(folder_path, exist_ok=True)
-
-
     parser = argparse.ArgumentParser('Deformable DETR training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
     check_args(args)

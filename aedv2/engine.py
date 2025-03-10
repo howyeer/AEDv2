@@ -19,6 +19,7 @@ from typing import Iterable
 import time
 
 import torch
+import torch.distributed
 import util.misc as utils
 
 from datasets.data_prefetcher import data_dict_to_cuda
@@ -40,6 +41,7 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
     header = 'Epoch: [{}]'.format(epoch)
 
     for data_dict in metric_logger.log_every(data_loader, print_freq, header):
+    # for data_dict in data_loader:
         # if (sum(p.numel() for p in data_dict['proposals']) == 0 or data_dict['proposals'] is None) and 'dance' in dataset_file:
         #     print('warning: no proposals in this batch, skip it')
         #     continue
@@ -80,6 +82,7 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
             grad_total_norm = utils.get_total_grad_norm(model.parameters(), max_norm)
         assert torch.isnan(grad_total_norm) == False, "grad is nan"
         optimizer.step()
+        torch.distributed.barrier() 
         # end_time = time.time()
         # print('time0:{}, time1:{}, time2:{}, time3:{}'.format(time1-start_time, time2-time1, time3-time2, end_time-time3))
         metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled)
@@ -93,9 +96,12 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
             writer.add_scalar('train/grad_norm', grad_total_norm, step)
             writer.add_scalars('train/other_losses', loss_dict_reduced_scaled, step)
             step += 1
+    # torch.distributed.barrier()
+    print(f"Rank {utils.get_rank()} reached sy",force=True)
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    # return None
 
 
 def build_captions_and_token_span(cat_dict):

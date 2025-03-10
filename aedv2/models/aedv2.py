@@ -2,6 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributed as dist
 from typing import List
 
 from util import box_ops, checkpoint
@@ -71,6 +72,7 @@ class ClipMatcher(SetCriterion):
 
     def initialize_for_single_clip(self, gt_instances: List[Instances]):
         self.gt_instances = gt_instances
+        self.num_samples = 0
         self.sample_device = None
         self._current_frame_idx = 0
         self.losses_dict = {}
@@ -274,6 +276,7 @@ class ClipMatcher(SetCriterion):
                         'num_boxes': num_boxes,
                         }
         
+        self.num_samples += len(gt_instances_i)   # + num_disappear_track
         self.sample_device = pt_weights_cos.device
         for loss in self.losses:
             new_track_loss = self.get_loss(loss,
@@ -308,6 +311,7 @@ class ClipMatcher(SetCriterion):
         # losses of each frame are calculated during the model's forwarding 
         # and are outputted by the model as outputs['losses_dict].
         losses = outputs.pop("losses_dict")
+        # num_samples = self.get_num_boxes(self.num_samples)
         for loss_name, loss in losses.items():
             losses[loss_name] /= self.num_frames
         return losses
@@ -321,19 +325,33 @@ class ClipMatcher(SetCriterion):
             iou, union = box_iou(box_ops.box_cxcywh_to_xyxy(det_boxes), box_ops.box_cxcywh_to_xyxy(gt_boxes))
             iou = iou.detach().cpu()
             matches, det_unmached, _ = linear_assignment((1.0-iou).numpy(), thresh=1-self.train_iou_thresh)
-            proposals = {}
-            proposals['matched_boxes'] = det_boxes[matches[:, 0]]
-            proposals['matched_scores'] = det_scores[matches[:, 0]]
-            proposals['matched_gt_labels'] = gt_labels[matches[:, 1]]
-            proposals['matched_det_labels'] = det_labels[matches[:, 0]]
-            proposals['matched_obj_ids'] = gt_obj_ids[matches[:, 1]]
-            proposals['matched_features'] = det_features[matches[:, 0]]
+            matched_boxes = det_boxes[matches[:, 0]]
+            matched_scores = det_scores[matches[:, 0]].unsqueeze(1)
+            matched_gt_labels = gt_labels[matches[:, 1]].unsqueeze(1)
+            matched_det_labels = det_labels[matches[:, 0]].unsqueeze(1)
+            matched_obj_ids = gt_obj_ids[matches[:, 1]].unsqueeze(1)
+            matched_features = det_features[matches[:, 0]]
+            matched_proposals = torch.cat([matched_boxes, matched_scores, matched_gt_labels, matched_det_labels, matched_obj_ids, matched_features], dim=1)
+            unmached_boxes = det_boxes[det_unmached]
+            unmached_scores = det_scores[det_unmached].unsqueeze(1)
+            unmached_gt_labels = torch.ones_like(unmached_scores) * (-1)
+            unmached_det_labels = det_labels[det_unmached].unsqueeze(1)
+            unmached_obj_ids = torch.ones_like(unmached_scores) * (-2)
+            unmached_features = det_features[det_unmached]
+            unmached_proposals = torch.cat([unmached_boxes, unmached_scores, unmached_gt_labels, unmached_det_labels, unmached_obj_ids, unmached_features], dim=1)
+            proposals = torch.cat([matched_proposals, unmached_proposals], dim=0)  # [:4,      4,       5,          6,        7,      8:263]
+                                                                                   # [boxes, scores, gt_labels, det_labels, obj_ids, features]
         else:
             #-------------------------------------------------------------------------------
-            proposals = None
+            matches = []
+            unmached_scores = det_scores.unsqueeze(1)
+            unmached_gt_labels = torch.ones_like(unmached_scores) * (-1)
+            unmached_obj_ids = torch.ones_like(unmached_scores) * (-2)
+            proposals = torch.cat([det_boxes, unmached_scores, unmached_gt_labels, det_labels.unsqueeze(1), 
+                                   unmached_obj_ids, det_features], dim=1)
             det_unmached = torch.arange(len(det_boxes))
         # assert matched_boxes.shape == gt_boxes.shape
-        return proposals, det_unmached
+        return proposals, det_unmached , matches
     
 
 class AEDv2(GroundingDINO):
@@ -398,8 +416,9 @@ class AEDv2(GroundingDINO):
         self.d_model = hidden_dim
         
         _feature_embed = MLP(hidden_dim, hidden_dim*2, hidden_dim, 3)
-        # nn.init.constant_(_feature_embed.layers.weight.data, 0)
-        # nn.init.constant_(_feature_embed.layers.bias.data, 0)
+        for layer in _feature_embed.layers:
+            nn.init.normal_(layer.weight, mean=0.0, std=0.1)
+            nn.init.constant_(layer.bias, 0)
 
         feature_embed_layerlist = [_feature_embed for i in range(self.transformer.num_decoder_layers)]  
         self.feature_embed = nn.ModuleList(feature_embed_layerlist)
@@ -430,20 +449,21 @@ class AEDv2(GroundingDINO):
         _, d_model = self.extra_linear.weight.shape
         if proposals is None:
             track_instances.ref_pts = torch.empty((0, 4), dtype=torch.float32)
+            track_instances.pred_boxes = torch.empty((0, 4), dtype=torch.float32)
             track_instances.query_pos = torch.empty((0, d_model), dtype=torch.float32)  # query
             track_instances.labels = torch.empty((0), dtype=torch.long)
             track_instances.det_scores = torch.empty((0), dtype=torch.float32)
         else:
-            track_instances.ref_pts = proposals['matched_boxes']  # [xc, yc, w, h]
-            track_instances.query_pos = pos2posemb(proposals['matched_scores'].reshape(-1,1), d_model) + proposals['matched_features']  # query
-            track_instances.labels = proposals['matched_det_labels'].long()
-            track_instances.det_scores = proposals['matched_scores'].float()
+            track_instances.ref_pts = proposals[:, :4]  # [xc, yc, w, h]
+            track_instances.pred_boxes = proposals[:, :4]  # [xc, yc, w, h]
+            track_instances.query_pos = pos2posemb(proposals[:, 4:5], d_model) + proposals[:, 8:]  # query
+            track_instances.labels = proposals[:,6].long()
+            track_instances.det_scores = proposals[:,4].float()
         track_instances.output_embedding = torch.zeros((len(track_instances), d_model))
         track_instances.obj_ids = torch.full((len(track_instances),), -1, dtype=torch.long)
         track_instances.matched_gt_ids = torch.full((len(track_instances),), -1, dtype=torch.long)
         track_instances.disappear_time = torch.zeros((len(track_instances), ), dtype=torch.long)
         track_instances.iou = torch.zeros((len(track_instances),), dtype=torch.float32)
-        track_instances.pred_boxes = torch.zeros((len(track_instances), 4), dtype=torch.float32)
         track_instances.save_period = torch.zeros((len(track_instances), ), dtype=torch.float32)
         track_instances.matched_track_embedding = torch.zeros((len(track_instances), d_model), dtype=torch.float32)
         
@@ -456,7 +476,7 @@ class AEDv2(GroundingDINO):
                 # gt_ids = -2: valid extra dets (e.g. false positives or unlabeled dets)
                 # gt_ids = -1: untracked
                 # gt_ids >= 0: tracked
-                track_instances.gt_ids = proposals['matched_obj_ids'].long()
+                track_instances.gt_ids = proposals[:,7].long()
         return track_instances.to(self.extra_linear.weight.device)
 
     def _forward_single_image(self, samples: NestedTensor, targets: List = None, **kw):
@@ -651,8 +671,7 @@ class AEDv2(GroundingDINO):
         out['proposals_embed'] = proposals_embed
         return out
     
-    def _post_process_single_image(self, frame_res, track_instances, num_proposals, is_last):
-        track_instances.pred_boxes[:num_proposals] = frame_res['pred_boxes']             #[0]
+    def _post_process_single_image(self, frame_res, track_instances, num_proposals, is_last):        
         track_instances.output_embedding[:num_proposals] = frame_res['proposals_embed']      #[0, :num_proposals]
         # matched_track_embedding inits as its own embedding
         track_instances.matched_track_embedding[:num_proposals] = frame_res['proposals_embed']    #[0, :num_proposals]
@@ -699,11 +718,11 @@ class AEDv2(GroundingDINO):
 
         tmp = {}
         tmp['track_instances'] = track_instances
-        out_track_instances, num_active_proposals, active_idxes = self.track_embed(tmp, num_proposals)
+        out_track_instances, num_active_proposals, active_idxes, active_proposals = self.track_embed(tmp, num_proposals)
         frame_res['track_instances'] = out_track_instances
         frame_res['active_idxes'] = active_idxes
 
-        return frame_res, num_active_proposals
+        return frame_res, active_proposals
 
     def  forward(self, data:dict, captions_dict):
         self.num_clip += 1
@@ -744,18 +763,16 @@ class AEDv2(GroundingDINO):
                 catname = captions_dict['cap2cat'][pred_phrase]
                 labels_filt.append(data['cat_names'][catname])
             labels_filt = torch.tensor(labels_filt).to(boxes_filt.device)
-
-            #可视化出检测结果
-            frame_ = frame.tensors[0]
-            # self.visualize(frame_, frame_index, boxes_filt, logits_filt, pred_phrases, 'det')
-            # self.visualize(frame_, frame_index, gt.boxes, gt.labels, gt.obj_ids, 'gt')
-
+            catid2cat = {}
+            for id, cat in zip(data['cat_names'].values(), data['cat_names'].keys()):
+                catid2cat[id] = cat
+            gtcat = [catid2cat[int(catid)] for catid in gt.labels]
+            
             #生成proposals
             #与gt框进行iou匹配,存在未匹配的检测框用于后续伪标签处理
-            proposals, det_unmached = self.criterion._match_det_gt(boxes_filt, logits_filt, features_filt, labels_filt, gt)
+            proposals, det_unmached, matches = self.criterion._match_det_gt(boxes_filt, logits_filt, features_filt, labels_filt, gt)
 
-
-            num_proposals = len(proposals['matched_boxes']) if proposals is not None else 0
+            num_proposals = len(proposals) if proposals is not None else 0
             
             if track_instances is None:
                 track_instances = self._generate_empty_tracks(proposals)
@@ -770,15 +787,25 @@ class AEDv2(GroundingDINO):
 
             #计算特征相似度矩阵
             frame_res = self._calculate_weight_matrix(proposals_embed, track_queries_embed)
-            frame_res['pred_boxes'] = proposals['matched_boxes'] if proposals is not None else torch.empty((0, 4))
+            frame_res['pred_boxes'] = proposals[:, :4] if proposals is not None else torch.empty((0, 4))
 
-            frame_res, _ = self._post_process_single_image(frame_res, track_instances, int(num_proposals), is_last)         
+            frame_res, active_proposals = self._post_process_single_image(frame_res, track_instances, int(num_proposals), is_last)         
             # time3 = time.time()
             track_instances = frame_res['track_instances']
+
+            #可视化出检测结果
+            frame_v = frame.tensors[0]
+            predcat = [catid2cat[int(catid)] for catid in proposals[active_proposals, 6]]
+            track_ids = track_instances.obj_ids[:active_proposals.sum()].cpu().numpy()
+
+            # self.visualize(frame_v, frame_index, proposals[active_proposals, :4], proposals[active_proposals, 4], predcat, track_ids, 'det')
+            # self.visualize(frame_v, frame_index, gt.boxes, gt.labels, gtcat, gt.obj_ids, 'gt')
+
             outputs['pred_boxes'].append(frame_res['pred_boxes'])
 
             # print('forward_single_image time:{}s, get_groundingdino_output time:{}s, post_process_single_image time:{}s'\
             #       .format(time1-star_time, time2-time1, time3-time2))
+            
         if not self.training:
             outputs['track_instances'] = track_instances
         else:
@@ -787,7 +814,31 @@ class AEDv2(GroundingDINO):
         outputs['extra_loss'] = extra_loss
         return outputs
 
-    def visualize(self ,frame, frame_index, boxes_, info1, info2, data_type):
+    def visualize(self ,frame, frame_index, boxes_, info1, info2, info3, data_type):
+        def plot_bbox(img, bbox, label, track_id):
+            tl = 3
+            if track_id >= 0:
+                np.random.seed(track_id)
+            else:
+                np.random.seed(2**32 - 1)
+            color = tuple(np.random.randint(0, 255, size=3).tolist())
+            bbox[:2] -= bbox[2:]/2
+            bbox[2:] += bbox[:2]
+            bbox *= np.array([w, h, w, h], dtype=np.float32)
+            c1, c2 = (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3]))
+            cv2.rectangle(img, c1, c2, color, thickness=tl)
+            if label:
+                tf = max(tl - 1, 1)  # font thickness
+                t_size = cv2.getTextSize(label, 0, fontScale=tl / 4, thickness=tf)[0]
+                c2 = c1[0] + t_size[0], c1[1] + t_size[1] + 3
+                cv2.rectangle(img, c1, c2, color, -1)  # filled
+                cv2.putText(img,
+                            label, (c1[0], c1[1] + t_size[1] + 3),
+                            0,
+                            tl / 4, [225, 255, 255],
+                            thickness=tf,
+                            lineType=cv2.LINE_AA)
+            return img
         img = frame.permute(1, 2, 0).cpu().numpy()
         boxes = boxes_.cpu().detach().numpy()
         # reverse normalize
@@ -800,24 +851,16 @@ class AEDv2(GroundingDINO):
         if data_type == 'det':
             logits = info1.cpu().detach().numpy()
             phrases = info2
-            for phrase, box, logit in zip(phrases, boxes, logits):
-                box[:2] -= box[2:]/2
-                box[2:] += box[:2]
-                box *= np.array([w, h, w, h], dtype=np.float32)
-                box = box.astype(np.int32)
-                img = cv2.rectangle(img, (box[0], box[1]), (box[2], box[3]), (0, 255, 0), 2)
-                cv2.putText(img, str(phrase)+' '+f"{logit:.3f}", (box[0], box[1]-2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            track_ids = info3
+            for phrase, box, logit, track_id in zip(phrases, boxes, logits, track_ids):
+                label = str(phrase)+' '+f"{logit:.3f}"
+                img = plot_bbox(img, box, label, track_id)
             cv2.imwrite('aedv2/output_dir/output_imgs/det_clip_{}_frame_{}.jpg'.format(self.num_clip, frame_index), img)
         elif data_type == 'gt':
-            labels = info1.cpu().numpy()
-            obj_ids = info2.cpu().numpy()
+            labels = info2
+            obj_ids = info3.cpu().numpy().astype(int)
             for label, box, obj_id in zip(labels, boxes, obj_ids):
-                box[:2] -= box[2:]/2
-                box[2:] += box[:2]
-                box *= np.array([w, h, w, h], dtype=np.float32)
-                box = box.astype(np.int32)
-                img = cv2.rectangle(img, (box[0], box[1]), (box[2], box[3]), (255, 0, 0), 2)
-                cv2.putText(img, str(label)+' '+str(obj_id), (box[0], box[1]-2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+                img = plot_bbox(img, box, label, obj_id)
             cv2.imwrite('aedv2/output_dir/output_imgs/gt_clip_{}_frame_{}.jpg'.format(self.num_clip, frame_index), img)
 
 
