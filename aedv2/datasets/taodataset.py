@@ -354,7 +354,7 @@ class TAODatasetVal(Dataset):  # TAO dataset
     
     def step_epoch(self):
         # one epoch finishes.
-        print("Dataset: epoch {} finishes".format(self.current_epoch))
+        print("Dataset: epoch {} finishes".format(self.current_epoch), force=True)
         self.set_epoch(self.current_epoch + 1)
     
     def __len__(self):

@@ -1,14 +1,17 @@
 export CUDA_VISIBLE_DEVICES=0,1
-export TORCH_DISTRIBUTED_DEBUG=DETAIL
-export TORCH_DISTRIBUTED_TIMEOUT=100000
+export NCCL_P2P_DISABLE=1
+export NCCL_DEBUG=INFO
+# export NCCL_DEBUG=INFO
+# export TORCH_DISTRIBUTED_DEBUG=DETAIL
+# export TORCH_DISTRIBUTED_TIMEOUT=600000
 python3 -m torch.distributed.launch --nproc_per_node=2 --master_port=29505 \
     --use_env aedv2/main.py \
     -c groundingdino/config/GroundingDINO_SwinT_OGC_AED.py \
     -p weights/groundingdino_swint_ogc.pth \
     --meta_arch 'AED' \
     --dataset_file 'tao' \
-    --epochs 2 \
-    --print_freq 50 \
+    --epochs 5 \
+    --print_freq 500 \
     --with_box_refine  \
     --lr_drop 1 \
     --lr 0.001 \
@@ -16,7 +19,7 @@ python3 -m torch.distributed.launch --nproc_per_node=2 --master_port=29505 \
     --sampler_lengths 8 \
     --decoder_cross_self \
     --clip_max_norm 10 \
-    --save_period 1 \
+    --save_period 2 \
     --mot_path /data/fzm_2022/Datasets \
     --bbox_loss_coef 0.5 \
     --giou_loss_coef 0.3 \
@@ -40,7 +43,7 @@ python3 -m torch.distributed.launch --nproc_per_node=2 --master_port=29505 \
     --ema_weight 0.5 \
     --sample_interval 3 \
     --clip_gap 1 \
-    --output_dir /home/hhy_2023/aaaacode/grounding-dino-aed/aedv2/output_dir
+    --output_dir /home/hhy_2023/aaaacode/grounding-dino-aed/aedv2/output_dir 
     
 
 
