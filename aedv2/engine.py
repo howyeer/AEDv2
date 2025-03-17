@@ -19,6 +19,7 @@ from typing import Iterable
 import time
 
 import torch
+import torch.distributed as dist
 import util.misc as utils
 
 from datasets.data_prefetcher import data_dict_to_cuda
@@ -38,7 +39,6 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     metric_logger.add_meter('grad_norm', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
     header = 'Epoch: [{}]'.format(epoch)
-
     for data_dict in metric_logger.log_every(data_loader, print_freq, header):
         # if (sum(p.numel() for p in data_dict['proposals']) == 0 or data_dict['proposals'] is None) and 'dance' in dataset_file:
         #     print('warning: no proposals in this batch, skip it')
@@ -49,16 +49,16 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
         data_dict = data_dict_to_cuda(data_dict, device)
         cat_names_dict = data_dict['cat_names']
         captions_dict = build_captions_and_token_span(cat_names_dict)
-        start_time = time.time()
+        # start_time = time.time()
         outputs = model(data_dict, captions_dict)
 
         loss_dict = criterion(outputs, data_dict)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
-        time1 = time.time()
+
         extra_loss = outputs['extra_loss']
         losses += extra_loss * 0
-        time2 = time.time()
+      
         # reduce losses over all GPUs for logging purposes
         # loss_dict_reduced = utils.reduce_dict(loss_dict)
         # loss_dict_reduced_scaled = {k: v * weight_dict[k]
@@ -69,9 +69,9 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
 
         # if not math.isfinite(loss_value):
         #     print("Loss is {}, stopping training".format(loss_value))
-        #     print(loss_dict_reduced)
+        #     # print(loss_dict_reduced)
         #     sys.exit(1)
-        time3 = time.time()
+        # time3 = time.time()
         optimizer.zero_grad()
         losses.backward()
         if max_norm > 0:
@@ -80,22 +80,23 @@ def train_one_epoch_mot(model: torch.nn.Module, criterion: torch.nn.Module,
             grad_total_norm = utils.get_total_grad_norm(model.parameters(), max_norm)
         assert torch.isnan(grad_total_norm) == False, "grad is nan"
         optimizer.step()
-        end_time = time.time()
-        print('time0:{}, time1:{}, time2:{}, time3:{}'.format(time1-start_time, time2-time1, time3-time2, end_time-time3))
+        # end_time = time.time()
+        # print('time0:{}, time1:{}, time2:{}, time3:{}'.format(time1-start_time, time2-time1, time3-time2, end_time-time3))
         # metric_logger.update(loss=loss_value, **loss_dict_reduced_scaled)
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
         metric_logger.update(grad_norm=grad_total_norm)
-        if writer is not None and int(os.environ.get("RANK", 0))==0:
-            writer.add_scalar('train/lr', optimizer.param_groups[0]["lr"], step)
-            writer.add_scalar('train/lr_backbone', optimizer.param_groups[1]["lr"], step)
-            writer.add_scalar('train/lr_linear_proj', optimizer.param_groups[2]["lr"], step)
-            # writer.add_scalar('train/loss', loss_value, step)
-            writer.add_scalar('train/grad_norm', grad_total_norm, step)
-            # writer.add_scalars('train/other_losses', loss_dict_reduced_scaled, step)
-            step += 1
+        # if writer is not None and int(os.environ.get("RANK", 0))==0:
+        #     writer.add_scalar('train/lr', optimizer.param_groups[0]["lr"], step)
+        #     # writer.add_scalar('train/lr_backbone', optimizer.param_groups[1]["lr"], step)
+        #     # writer.add_scalar('train/lr_linear_proj', optimizer.param_groups[2]["lr"], step)
+        #     writer.add_scalar('train/loss', loss_value, step)
+        #     writer.add_scalar('train/grad_norm', grad_total_norm, step)
+        #     writer.add_scalars('train/other_losses', loss_dict_reduced_scaled, step)
+        #     step += 1
     metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger)
+    # print("Averaged stats:", metric_logger)
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    return {}
 
 
 def build_captions_and_token_span(cat_dict):
@@ -130,5 +131,6 @@ def build_captions_and_token_span(cat_dict):
     captions_dict['captions'] = captions
     captions_dict['cat2tokenspan'] = cat2tokenspan
     captions_dict['cap2cat'] = cap2cat
+    captions_dict['cat_names'] = cat_dict
 
     return captions_dict

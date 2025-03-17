@@ -1,5 +1,6 @@
 import argparse
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 import sys
 sys.path.append('/home/hhy_2023/aaaacode/GroundingDINO')
 

@@ -25,16 +25,18 @@ class QueryUpdating(nn.Module):
         track_instances: Instances = data['track_instances']
         if self.training:
             active_idxes = (track_instances.obj_ids >= 0) | (track_instances.gt_ids == -2)
+            active_proposals = active_idxes[:num_proposals]
             num_active_proposals = active_idxes[:num_proposals].sum()
             active_track_instances = track_instances[active_idxes]
             active_track_instances, num_active_proposals = self._random_drop_proposals(active_track_instances, num_active_proposals)
 
         else:
             active_idxes = track_instances.obj_ids >= 0
+            active_proposals = active_idxes[:num_proposals]
             num_active_proposals = active_idxes[:num_proposals].sum()
             active_track_instances = track_instances[active_idxes]
 
-        return active_track_instances, num_active_proposals, active_idxes
+        return active_track_instances, num_active_proposals, active_idxes, active_proposals
 
     def _update_track_embedding(self, track_instances: Instances, num_proposals) -> Instances:
         p_output_embeddings = track_instances.output_embedding[:num_proposals]
@@ -44,9 +46,9 @@ class QueryUpdating(nn.Module):
         return track_instances
 
     def forward(self, data, num_proposals) -> Instances:
-        active_track_instances, num_active_proposals, active_idxes = self._select_active_tracks(data, num_proposals)
+        active_track_instances, num_active_proposals, active_idxes, active_proposals = self._select_active_tracks(data, num_proposals)
         active_track_instances = self._update_track_embedding(active_track_instances, num_active_proposals)
-        return active_track_instances, num_active_proposals, active_idxes
+        return active_track_instances, num_active_proposals, active_idxes, active_proposals
     
 class QueryUpdatingEMA(QueryUpdating):
     def __init__(self, args, ema_weight=0.9):

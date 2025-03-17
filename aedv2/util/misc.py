@@ -54,10 +54,14 @@ class SmoothedValue(object):
         """
         Warning: does not synchronize the deque!
         """
+        print(f"Rank {dist.get_rank()} world_size: {dist.get_world_size()}",force=True)
         if not is_dist_avail_and_initialized():
+            print('not is_dist_avail_and_initialized')
             return
         t = torch.tensor([self.count, self.total], dtype=torch.float64, device='cuda')
-        dist.barrier()
+        print(f"Rank {dist.get_rank()} reached barrier",force=True)
+        dist.barrier()   
+        print(f"Rank {dist.get_rank()} passed barrier",force=True)  #打印 rank，检查是否有进程通过
         dist.all_reduce(t)
         t = t.tolist()
         self.count = int(t[0])
@@ -411,6 +415,7 @@ def save_on_master(*args, **kwargs):
 
 
 def init_distributed_mode(args):
+    # print(os.environ)
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         args.rank = int(os.environ["RANK"])
         args.world_size = int(os.environ['WORLD_SIZE'])
@@ -447,6 +452,9 @@ def init_distributed_mode(args):
         args.rank, args.dist_url), flush=True)
     torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                          world_size=args.world_size, rank=args.rank)
+    
+    print(f"Rank {dist.get_rank()} world_size: {dist.get_world_size()}")
+    
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
 

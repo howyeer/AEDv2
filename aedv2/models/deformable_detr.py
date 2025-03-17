@@ -13,6 +13,7 @@
 Deformable DETR model and criterion classes.
 """
 import torch
+import torch.distributed
 import torch.nn.functional as F
 from torch import nn
 
@@ -173,7 +174,9 @@ class SetCriterion(nn.Module):
         num_boxes = sum(len(t["labels"]) for t in targets)
         num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device)
         if is_dist_avail_and_initialized():
+            print(f"Rank {torch.distributed.get_rank()} reached all_reduce",force=True)
             torch.distributed.all_reduce(num_boxes)
+            print(f"Rank {torch.distributed.get_rank()} passed all_reduce",force=True)
         num_boxes = torch.clamp(num_boxes / get_world_size(), min=1).item()
 
         # Compute all the requested losses

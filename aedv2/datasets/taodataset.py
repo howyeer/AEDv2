@@ -43,8 +43,6 @@ class TAODatasetTrain(Dataset):  # TAO dataset
         self.sample_mode = args.sample_mode
         self.sample_interval = args.sample_interval
 
-        self.has_vised = 0
-        self.vis_num = 10
 
     def _generate_train_imgs(self, vid_img_map, img_ann_map, vids, cats, base_only):
         if base_only:
@@ -97,7 +95,7 @@ class TAODatasetTrain(Dataset):  # TAO dataset
                 gt_boxes = torch.as_tensor(gt_boxes, dtype=torch.float32)
                 gt_labels = torch.as_tensor(gt_labels, dtype=torch.long)
                 gt_scores = torch.as_tensor(gt_scores, dtype=torch.float32)
-                gt_track_ids = torch.as_tensor(gt_track_ids, dtype=torch.float64)
+                gt_track_ids = torch.as_tensor(gt_track_ids, dtype=torch.float32)
                 gt_iscrowd = torch.as_tensor(gt_iscrowd, dtype=torch.bool)
                 targets.append({'boxes': gt_boxes,  # x0, y0, x1, y1
                                 'labels': gt_labels,
@@ -131,7 +129,7 @@ class TAODatasetTrain(Dataset):  # TAO dataset
         gt_instances = Instances(tuple(img_shape))
         gt_instances.boxes = torch.empty((0, 4), dtype=torch.float32)
         gt_instances.labels = torch.empty((0,), dtype=torch.int64)
-        gt_instances.obj_ids = torch.empty((0,), dtype=torch.float64)
+        gt_instances.obj_ids = torch.empty((0,), dtype=torch.float32)
         return gt_instances
     
     def set_epoch(self, epoch):
@@ -143,53 +141,6 @@ class TAODatasetTrain(Dataset):  # TAO dataset
         # one epoch finishes.
         print("Dataset: epoch {} finishes".format(self.current_epoch))
         self.set_epoch(self.current_epoch + 1)
-
-
-    def vis_one_clip(self, ori_images, ori_targets):
-        # vis gt, proposal respectively then save
-        if self.has_vised <= self.vis_num:
-            def cxcywh_to_xyxy(box):
-                box[0] -= box[2]/2
-                box[1] -= box[3]/2
-                box[2] += box[0]
-                box[3] += box[1]
-                return box
-            def draw(img_i, box, obj_id, suffix: str):
-                if 'gt' in suffix:
-                    color = (0, 0, 255)
-                elif 'det' in suffix:
-                    color = (0, 255, 0)
-                else:
-                    raise ValueError('suffix should be gt or det')
-                box *= np.array([w, h, w, h], dtype=np.float32)
-                box = cxcywh_to_xyxy(box).astype(np.int32)
-                img_i = cv2.rectangle(img_i, (box[0], box[1]), (box[2], box[3]), color, 2)
-                cv2.putText(img_i, str(int(obj_id))+f'_{suffix}', (box[0], box[1]-2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-                return img_i
-            
-            print('visualizing clip {}'.format(self.has_vised))
-            images = copy.deepcopy(ori_images)
-            targets = copy.deepcopy(ori_targets)
-            frame = 0
-            for img_i, targets_i in zip(images, targets):
-                img_i = img_i.permute(1, 2, 0).cpu().numpy()
-                # reverse normalize
-                img_i *= np.array([0.229, 0.224, 0.225])
-                img_i += np.array([0.485, 0.456, 0.406])
-                img_i *= 255.0
-                h, w, _ = img_i.shape
-                img_i = cv2.UMat(img_i)
-                img_i = cv2.cvtColor(img_i, cv2.COLOR_RGB2BGR)
-                if 'boxes' in targets_i:
-                    boxes_gt = targets_i['boxes'].numpy()
-                    labels_gt = targets_i['labels'].numpy()
-                    scores_gt = targets_i['scores'].numpy()
-                    obj_ids_gt = targets_i['obj_ids'].numpy()
-                    for box, label, score, obj_id in zip(boxes_gt, labels_gt, scores_gt, obj_ids_gt):
-                        img_i = draw(img_i, box, obj_id, 'gt')
-                cv2.imwrite('aedv2/output_img/clip_{}_frame_{}.jpg'.format(self.has_vised, frame), img_i)
-                frame += 1
-            self.has_vised += 1
 
     def __len__(self):
         return len(self.all_indices)
@@ -220,7 +171,6 @@ class TAODatasetTrain(Dataset):  # TAO dataset
             images, targets = self.transform(ori_images, targets)
         else:
             raise ValueError('transform is None')
-        # self.vis_one_clip(images, targets)
         gt_instances = []
         for img_i, targets_i in zip(images, targets):
             if 'boxes' in targets_i:
@@ -264,92 +214,79 @@ class TAODatasetVal(Dataset):  # TAO dataset
         self.args = args
         self.num_frames_per_batch = args.sampler_lengths[0]
         self.transform = transform
-        # thresh
-        self.score_thresh = args.val_score_thresh
-        self.nms_thresh = args.val_nms_thresh
         self.one_class = one_class  # if true, take all objects as foreground
-        self.clips = self._generate_val_clips(args.val_det_path, vid_img_map, img_ann_map, vids,
-                                              args.val_max_det_num)
-        print('found {} videos, {} clips'.format(len(vids), len(self.clips)))
+        self.clips_with_gt = self._generate_val_clips(vid_img_map, img_ann_map, vids, cats)
+        print('found {} videos, {} clips'.format(len(vids), len(self.clips_with_gt)))
 
-    def _generate_val_clips(self, det_path, vid_img_map, img_ann_map, vids, max_det=200):
-        clips = []
-        det = json.load(open(det_path, 'r'))
-        det_box = defaultdict(list)
-        for d in det:
-            det_box[d['image_id']].append(d)
+    def _generate_val_clips(self, vid_img_map, img_ann_map, vids, cats):
+        clips_with_gt = []
+        all_indices = []
+        vid_tmax = {}
+        categories_counter = defaultdict(int)
         for vid_info in vids.values():
             vid_id = vid_info['id']
             imgs = vid_img_map[vid_id]
             imgs = sorted(imgs, key=lambda x: x['frame_index'])
             num_imgs = len(imgs)
-            clip = imgs
-            targets = []
+            cat_name_list = [item['name'] for item in cats.values()]
+            cat_dict = dict()
+            targets = []  # gt and detection results
             img_infos = []
-            for img in clip:
-                img_id = img['id']
+            for i in range(len(imgs)):
+                img = imgs[i]
+                gt_boxes, gt_labels, gt_track_ids = [], [], []
                 height, width = float(img['height']), float(img['width'])
+                anns = img_ann_map[img['id']]
+                img_id = img['id']
                 img_infos.append({'file_name': img['file_name'],
                                 'height': height,
                                 'width': width,
                                 'frame_index': img['frame_index'],
                                 'image_id': img_id,
                                 'video_id': vid_id})
-                det_boxes, det_labels, det_track_ids, det_scores, det_iscrowd = [], [], [], [], []
-                det_box_n = det_box[img_id]
-                for d in det_box_n:
-                    score = d['score']
-                    if score < self.score_thresh:
-                        continue
-                    box = d['bbox']  # x0, y0, w, h
+                for ann in anns:
+                    box = ann['bbox']  # x0, y0, w, h
                     box[2] += box[0]
                     box[3] += box[1]
-                    # box = clip_box(box, height, width)
-                    det_boxes.append(box)
-                    det_labels.append(d['category_id'])  # category
-                    det_scores.append(score)
-                if len(det_boxes) != 0:
-                    if self.nms_thresh < 1.0:
-                        det_boxes = torch.as_tensor(det_boxes, dtype=torch.float32)
-                        det_labels = torch.as_tensor(det_labels, dtype=torch.long)
-                        det_scores = torch.as_tensor(det_scores, dtype=torch.float32)
-                        keep  = nms(det_boxes, det_scores, self.nms_thresh)
-                        det_boxes = det_boxes[keep]
-                        det_labels = det_labels[keep]
-                        det_scores = det_scores[keep]
-                    # only keep top k dets
-                    if len(det_boxes) > max_det:
-                        print('warning: too many dets in image {} ({}), only keep top {}.'
-                              .format(img_id, len(det_boxes), max_det))
-                        det_scores, indices = torch.topk(det_scores, max_det)
-                        det_boxes = det_boxes[indices]
-                        det_labels = det_labels[indices]
-                    targets.append({'boxes': det_boxes,  # x0, y0, x1, y1
-                                    'labels': det_labels,
-                                    'scores': det_scores})
-                else:
-                    print('warning: no detection results for image id {}'.format(img_id))
+                    gt_boxes.append(box)
+                    categories_counter[ann['category_id']] += 1
+                    gt_labels.append(ann['category_id'])  # category
+                    gt_track_ids.append(ann['track_id'])
+                    cat_name = cat_name_list[ann['category_id']-1]
+                    cat_dict[cat_name] = ann['category_id']
+                if len(gt_track_ids) == 0:
                     targets.append({})
-            clips.append([img_infos, targets])
-        return clips
+                    continue
+                gt_boxes = torch.as_tensor(gt_boxes, dtype=torch.float32)
+                gt_labels = torch.as_tensor(gt_labels, dtype=torch.long)
+                gt_track_ids = torch.as_tensor(gt_track_ids, dtype=torch.float32)
+                targets.append({'boxes': gt_boxes,  # x0, y0, x1, y1
+                                'labels': gt_labels,
+                                'obj_ids': gt_track_ids,
+                                })
+            clips_with_gt.append({'img_infos': img_infos,
+                                          'targets': targets,
+                                          'cat_dict': cat_dict,
+                                          })
+        return clips_with_gt
     
+    def _targets_to_instances(self, targets: dict, img_shape) -> Instances:
+        gt_instances = Instances(tuple(img_shape))
+        gt_instances.boxes = targets['boxes']
+        if self.one_class:
+            gt_instances.labels = torch.zeros_like(targets['labels'], dtype=targets['labels'].dtype)
+        else:
+            gt_instances.labels = targets['labels']
+        gt_instances.obj_ids = targets['obj_ids']
+        return gt_instances
+
     def _generate_empty_instance(self, img_shape):
         gt_instances = Instances(tuple(img_shape))
         gt_instances.boxes = torch.empty((0, 4), dtype=torch.float32)
         gt_instances.labels = torch.empty((0,), dtype=torch.int64)
-        gt_instances.obj_ids = torch.empty((0,), dtype=torch.float64)
+        gt_instances.obj_ids = torch.empty((0,), dtype=torch.float32)
         return gt_instances
-    
-    def _generate_proposal(self, target: dict):
-        det_boxes = target['boxes']
-        det_scores = target['scores'][..., None]
-        if self.one_class:
-            labels = torch.zeros_like(target['labels'], dtype=target['labels'].dtype)[..., None]
-        else:
-            labels = target['labels'][..., None]
-        proposal = torch.cat([det_boxes, det_scores, labels], dim=1)
-        return proposal
-    
+      
     def set_epoch(self, epoch):
         self.current_epoch = epoch
         return
@@ -360,30 +297,34 @@ class TAODatasetVal(Dataset):  # TAO dataset
         self.set_epoch(self.current_epoch + 1)
     
     def __len__(self):
-        return len(self.clips)
+        return len(self.clips_with_gt)
     
     def __getitem__(self, idx: int):
-        img_infos, targets = copy.deepcopy(self.clips[idx])
+        gt_instances = []
+        img_infos = copy.deepcopy(self.clips_with_gt[idx]['img_infos'])
+        targets = copy.deepcopy(self.clips_with_gt[idx]['targets'])
+        cat_names = copy.deepcopy(self.clips_with_gt[idx]['cat_dict'])
+        
         ori_images = [Image.open(osp.join(self.root, 'frames', img_info['file_name'])) \
                   for img_info in img_infos]
         if self.transform is not None:
-            images, targets = self.transform(ori_images, targets)
+            images,targets = self.transform(ori_images, targets)
         else:
             raise ValueError('transform is None')
-        proposals = []
         for img_i, targets_i in zip(images, targets):
-            if 'boxes' in targets_i:  # not empty
-                # det results
-                proposal = self._generate_proposal(targets_i)
-                proposals.append(proposal)
+            if 'boxes' in targets_i:
+            # gt
+                gt_instance = self._targets_to_instances(targets_i, img_i.shape[1:3])
+                gt_instances.append(gt_instance)
             else:
-                # det results
-                proposals.append(None)
+                # gt
+                gt_instances.append(self._generate_empty_instance(img_i.shape[1:3]))
         return {
             'imgs': images,
-            'img_infos': img_infos,  # for inference
-            'ori_imgs': ori_images, 
-            'proposals': proposals,  # labels for proposals are used in inference
+            'img_infos': img_infos,
+            'gt_instances': gt_instances,
+            'ori_imgs': ori_images,  
+            'cat_names': cat_names
         }
     
     
@@ -409,8 +350,8 @@ def make_transforms_for_TAO(image_set, args=None):
             T.MotRandomSelect(
                 T.MotRandomResize(scales, max_size=1536),
                 T.MotCompose([
-                    T.MotRandomResize([800, 1000, 1200]),
-                    T.FixedMotRandomCrop(800, 1200),
+                    T.MotRandomResize([1000, 1200]),
+                    T.FixedMotRandomCrop(1000, 1200),
                     T.MotRandomResize(scales, max_size=1536),
                 ])
             ),
@@ -447,6 +388,21 @@ def build(image_set, args):
     if image_set == 'val':
         dataset = TAODatasetVal(root, args, logger=None, transform=transform, one_class=False)
     return dataset
+
+
+#数据集子集
+class SubsetDataset(TAODatasetTrain):
+    def __init__(self, original_dataset, fraction=0.5):
+        self.original_dataset = original_dataset
+        self.size = int(fraction * len(original_dataset))
+        self.all_indices = original_dataset.all_indices[:self.size]  # 取前 fraction 部分
+
+    def __len__(self):
+        return len(self.all_indices)
+
+    def __getitem__(self, idx):
+        return self.original_dataset[idx]
+
 
 
 if __name__ == '__main__':

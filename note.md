@@ -1,5 +1,9 @@
 gtbox [x0,y0,x1,y1]
 
+<<<<<<< HEAD
+'obj_ids': gt_track_ids
+=======
+>>>>>>> 949a4975e77cae7371b7e5c2bd319bdecffd8ea4
 
 det_idxes = target['obj_ids'][is_det][..., None].float()
 proposal = torch.cat([det_boxes, det_scores, det_labels, det_idxes], dim=1)     7个维度
@@ -28,3 +32,5 @@ if not any([len(i) for i in data_dict['gt_instances']]):
             continue
 ```
 问题还存在：因为存在每个frame都没有匹配上的clip，导致无法计算损失
+
+在dist.barrier()之前没经过all_reduce()，GPU依然卡在NCCL
